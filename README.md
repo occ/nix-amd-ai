@@ -75,20 +75,33 @@ If you see `lemonade backends` reporting a backend as `installed` but benchmarks
 
 ## Which backend should I use?
 
-Measured on Strix Point (gfx1150) with Gemma-4-26B-A4B-it-GGUF:
+All numbers measured on Strix Point (gfx1150, Radeon 890M iGPU, 64 GiB DDR5-5600). Prompt 256 tokens, generation 128 tokens, 3 iterations after 1 warmup.
+
+### Large, prefill-heavy: Gemma-4-26B-A4B-it-GGUF (~15.7 GB, via `llama-bench`)
 
 | Metric | ROCm | Vulkan | Winner |
 | ------ | ---- | ------ | ------ |
 | Prefill (pp) | 395 t/s | 265 t/s | ROCm (+49%) |
 | Decode (tg)  | 10.4 t/s | 13.6 t/s | Vulkan (+31%) |
 
+### Mid-size, chat-shaped: Qwen3.5-9B (same family on all three backends)
+
+| Backend | Model | TTFT (s) | Decode (t/s) |
+| ------- | ----- | -------: | -----------: |
+| Vulkan (llamacpp:vulkan) | `Qwen3.5-9B-GGUF` (UD-Q4_K_XL) | 1.36 | 12.9 +/- 0.1 |
+| ROCm (llamacpp:rocm)     | `Qwen3.5-9B-GGUF` (UD-Q4_K_XL) | 1.85 | 9.6 +/- 0.1 |
+| FLM (flm:npu)            | `qwen3.5-9b-FLM`               | 4.17 | 11.9 +/- 4.5 |
+
+Notes: FLM's TTFT is dominated by a one-off NPU compile-to-cache; steady-state decode is the useful number. FLM's GGUF-vs-proprietary format means quantization isn't bit-identical to the llamacpp row, so treat these as same-family, not same-weights.
+
 **Recommendation:**
 
-- Use **ROCm** for prefill-heavy workloads (long-context, RAG, batch processing).
-- Use **Vulkan** for interactive chat (decode-heavy).
+- **Interactive chat on mid-size models** (7–14B Q4): use **Vulkan**. Wins both TTFT and decode here — Vulkan's low per-dispatch overhead dominates when prefill batches are small.
+- **Prefill-heavy workloads on large models** (long-context, RAG, batch on 20B+): use **ROCm**. The rocBLAS GEMM advantage shows up as model size grows.
+- **Power-budget / idle-CPU scenarios**: use **FLM/NPU** — decode is competitive with Vulkan and offloads the GPU, but the compile-on-first-load TTFT is noticeable.
 - ROCm numbers will improve when ROCm ≥ 7.1 ships native gfx1150 kernels (currently requires gfx1102 override via `rocmGfxOverride`).
 
-Enable both and let lemonade pick the right recipe per model.
+Enable all three and let lemonade pick the recipe per model.
 
 ## Validation
 
