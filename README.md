@@ -65,6 +65,14 @@ trusted-public-keys = ["nix-amd-ai.cachix.org-1:F4OU4vw/lV2oiG6SBHZ+nqjl4EFJuqI4
 - Declarative backend wiring (both the `lemond` service and direct CLI usage receive the ROCm/Vulkan backend paths automatically)
 - `rocmGfxOverride`: set to `"11.0.2"` on Strix Point (gfx1150) to override the GFX version to gfx1102, enabling ROCm support on hardware not yet natively supported by ROCm. Example: `rocmGfxOverride = "11.0.2";`
 
+### Why `enableROCm` / `enableVulkan` matter on NixOS
+
+Lemonade's RPM ships its own `llama-server` binaries for each backend, but they're linked against Linux FHS paths (`/usr/lib`) for `libvulkan.so.1`, `libstdc++.so.6`, etc. On NixOS those libraries are not on the default loader path, so the bundled binaries fail to dlopen and **lemonade silently falls back to CPU** — the server still responds, it just does so at a fraction of GPU speed.
+
+`enableROCm = true` and `enableVulkan = true` replace the bundled binaries with the `llama-cpp-rocm` / `llama-cpp-vulkan` packages built in this flake (correct RPATH via `autoPatchelfHook`) by exporting `LEMONADE_LLAMACPP_{ROCM,VULKAN}_BIN`. The lemonade wrapper persists those paths into `~/.cache/lemonade/config.json` on every launch so both the `lemond` service and ad-hoc CLI invocations pick them up.
+
+If you see `lemonade backends` reporting a backend as `installed` but benchmarks report <5 t/s decode on a small model, you're on CPU — check that the matching `enable*` option is set and the host has been rebuilt.
+
 ## Which backend should I use?
 
 Measured on Strix Point (gfx1150) with Gemma-4-26B-A4B-it-GGUF:
