@@ -72,57 +72,20 @@ def http_post_stream(base_url, path, payload, timeout=300):
                     yield line[6:].decode("utf-8", errors="replace")
 
 
-def check_backends(base_url, required_recipes):
-    """Assert all backends needed for requested recipes are ready."""
-    try:
-        backends = http_get(base_url, "/api/v0/backends")
-    except urllib.error.URLError as exc:
-        print(
-            f"ERROR: cannot reach lemonade at {base_url}: {exc}",
-            file=sys.stderr,
-        )
-        sys.exit(2)
+def check_backends(_base_url, _required_recipes):
+    """Backend readiness check.
 
-    # backends is a list of dicts: [{name, status, ...}, ...]
-    backend_map = {}
-    for entry in backends:
-        name = entry.get("name") or entry.get("backend_name") or ""
-        status = entry.get("status", "")
-        backend_map[name] = status
-
-    not_ready = []
-    for recipe in required_recipes:
-        # recipe format: "llamacpp:rocm", "llamacpp:vulkan", "flm"
-        # lemonade backend names match the recipe prefix
-        backend_name = recipe.split(":")[0] if ":" in recipe else recipe
-        # also try full recipe name
-        status = (
-            backend_map.get(recipe)
-            or backend_map.get(backend_name)
-            or "unknown"
-        )
-        if status not in ("ready", "installed"):
-            not_ready.append(f"{recipe!r} (status={status!r})")
-
-    if not_ready:
-        print(
-            "ERROR: the following backends are not ready: "
-            + ", ".join(not_ready),
-            file=sys.stderr,
-        )
-        print(
-            "This means lemonade will silently fall back to CPU. "
-            "Check LEMONADE_LLAMACPP_ROCM_BIN / "
-            "LEMONADE_LLAMACPP_VULKAN_BIN env vars.",
-            file=sys.stderr,
-        )
-        sys.exit(2)
+    Lemonade does not expose a /api/v1/backends HTTP endpoint -- the
+    `lemonade backends` CLI reads local config files directly. We rely on
+    the post-hoc --min-decode-tps threshold to catch silent CPU fallback.
+    """
+    return
 
 
 def check_models(base_url, model_ids):
     """Assert models exist and are downloaded. Returns model info map."""
     try:
-        models_list = http_get(base_url, "/api/v0/models")
+        response = http_get(base_url, "/api/v1/models")
     except urllib.error.URLError as exc:
         print(
             f"ERROR: cannot reach lemonade at {base_url}: {exc}",
@@ -130,10 +93,16 @@ def check_models(base_url, model_ids):
         )
         sys.exit(2)
 
-    # Build a map from model_name to model metadata
+    # /api/v1/models returns {"data": [...], "object": "list"}
+    if isinstance(response, dict):
+        models_list = response.get("data", [])
+    else:
+        models_list = response
+
+    # Build a map from model id to metadata
     model_map = {}
     for m in models_list:
-        name = m.get("model_name") or m.get("name") or ""
+        name = m.get("id") or m.get("model_name") or m.get("name") or ""
         model_map[name] = m
 
     not_found = []
@@ -167,7 +136,7 @@ def load_model(base_url, model_id):
     try:
         result, _ = http_post(
             base_url,
-            "/api/v0/load",
+            "/api/v1/load",
             {"model_name": model_id},
             timeout=300,
         )
@@ -189,12 +158,13 @@ def build_prompt(prompt_tokens):
     return "The " * prompt_tokens
 
 
-def run_completion(base_url, prompt, gen_tokens):
+def run_completion(base_url, model_id, prompt, gen_tokens):
     """Run one streaming completion.
 
     Returns (ttft_sec, decode_tps, total_tokens_generated).
     """
     payload = {
+        "model": model_id,
         "prompt": prompt,
         "max_tokens": gen_tokens,
         "stream": True,
@@ -205,10 +175,13 @@ def run_completion(base_url, prompt, gen_tokens):
     token_count = 0
     t_last_token = None
 
-    # Track usage from final SSE chunk if provided
+    # Track usage and timings from final SSE chunk
     final_usage = None
+    final_timings = None
 
-    for raw_line in http_post_stream(base_url, "/v1/completions", payload):
+    for raw_line in http_post_stream(
+        base_url, "/api/v1/completions", payload
+    ):
         if raw_line.strip() == "[DONE]":
             break
         try:
@@ -219,6 +192,8 @@ def run_completion(base_url, prompt, gen_tokens):
         # Check for usage in final chunk (some servers send it)
         if "usage" in chunk and chunk.get("usage"):
             final_usage = chunk["usage"]
+        if "timings" in chunk and chunk.get("timings"):
+            final_timings = chunk["timings"]
 
         choices = chunk.get("choices", [])
         for choice in choices:
@@ -242,7 +217,11 @@ def run_completion(base_url, prompt, gen_tokens):
     else:
         completion_tokens = token_count
 
-    if completion_tokens <= 1:
+    # Prefer server-reported timings (llama.cpp's predicted_per_second)
+    # over client-side measurement -- they exclude HTTP/SSE overhead.
+    if final_timings and final_timings.get("predicted_per_second"):
+        decode_tps = final_timings["predicted_per_second"]
+    elif completion_tokens <= 1:
         decode_tps = 0.0
     else:
         decode_elapsed = t_last_token - t_first_token
@@ -270,7 +249,7 @@ def benchmark_model(
         f"  Warming up ({warmup} iteration(s))...", file=sys.stderr
     )
     for _ in range(warmup):
-        run_completion(base_url, prompt, gen_tokens)
+        run_completion(base_url, model_id, prompt, gen_tokens)
 
     print(
         f"  Measuring ({repeat} iteration(s))...", file=sys.stderr
@@ -278,7 +257,9 @@ def benchmark_model(
     ttft_samples = []
     tps_samples = []
     for i in range(repeat):
-        ttft, tps, ntok = run_completion(base_url, prompt, gen_tokens)
+        ttft, tps, ntok = run_completion(
+            base_url, model_id, prompt, gen_tokens
+        )
         if ttft is None:
             print(
                 f"  WARNING: iteration {i + 1} produced no tokens",
