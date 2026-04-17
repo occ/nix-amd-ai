@@ -4,7 +4,7 @@
   pkgs,
   ...
 }: let
-  inherit (lib) mkEnableOption mkOption mkIf types optionalString optional makeBinPath versionAtLeast;
+  inherit (lib) mkEnableOption mkOption mkIf types optionalString optional optionalAttrs makeBinPath versionAtLeast;
   cfg = config.hardware.amd-npu;
 
   xrtPrefix = "${pkgs.xrt}/opt/xilinx/xrt";
@@ -19,8 +19,6 @@
   optionalROCmLibs =
     optionalString cfg.enableROCm
     ":${pkgs.rocmPackages.clr}/lib";
-
-  llamacppRocm = pkgs.llama-cpp-rocm;
 
   pathList =
     [xrt-combined]
@@ -107,6 +105,8 @@ in {
     environment.sessionVariables = {
       XILINX_XRT = "${xrt-combined}";
       XRT_PATH = "${xrt-combined}";
+    } // optionalAttrs cfg.enableROCm {
+      LEMONADE_LLAMACPP_ROCM_BIN = "${pkgs.llama-cpp-rocm}/bin/llama-server";
     };
 
     # System packages
@@ -119,7 +119,7 @@ in {
       ++ optional cfg.enableFastFlowLM pkgs.fastflowlm
       ++ optional cfg.enableLemonade pkgs.lemonade
       ++ optional cfg.enableROCm pkgs.rocmPackages.clr
-      ++ optional cfg.enableROCm llamacppRocm;
+      ++ optional cfg.enableROCm pkgs.llama-cpp-rocm;
 
     # Lemonade systemd service
     systemd.services.lemond = mkIf cfg.enableLemonade {
@@ -141,7 +141,7 @@ in {
           "LD_LIBRARY_PATH=${xrt-combined}/lib${optionalROCmLibs}"
           "PATH=${makeBinPath pathList}:/run/current-system/sw/bin"
         ]
-        ++ optional cfg.enableROCm "LEMONADE_LLAMACPP_ROCM_BIN=${llamacppRocm}/bin/llama-server";
+        ++ optional cfg.enableROCm "LEMONADE_LLAMACPP_ROCM_BIN=${pkgs.llama-cpp-rocm}/bin/llama-server";
       };
     };
   };

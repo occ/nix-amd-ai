@@ -18,6 +18,7 @@
           inherit xrt fastflowlm;
           xrt-plugin-amdxdna = final.callPackage ./pkgs/xrt-plugin-amdxdna {inherit xrt;};
           lemonade = final.callPackage ./pkgs/lemonade {inherit fastflowlm;};
+          llama-cpp-rocm = prev.llama-cpp-rocm;
         };
 
         nixosModules.default = {
@@ -28,6 +29,7 @@
 
       perSystem = {
         pkgs,
+        system,
         ...
       }: let
         xrt = pkgs.callPackage ./pkgs/xrt {};
@@ -37,6 +39,53 @@
           inherit xrt fastflowlm;
           xrt-plugin-amdxdna = pkgs.callPackage ./pkgs/xrt-plugin-amdxdna {inherit xrt;};
           lemonade = pkgs.callPackage ./pkgs/lemonade {inherit fastflowlm;};
+          llama-cpp-rocm = pkgs.llama-cpp-rocm;
+        };
+
+        checks = {
+          module-eval-rocm-false = (inputs.nixpkgs.lib.nixosSystem {
+            inherit system;
+            modules = [
+              inputs.self.nixosModules.default
+              {
+                boot.loader.grub.enable = false;
+                fileSystems."/" = { device = "/dev/sda1"; fsType = "ext4"; };
+                hardware.amd-npu = {
+                  enable = true;
+                  enableFastFlowLM = true;
+                  enableLemonade = true;
+                  enableROCm = false;
+                  lemonade.user = "testuser";
+                };
+                users.users.testuser = {
+                  isNormalUser = true;
+                  extraGroups = ["video" "render"];
+                };
+              }
+            ];
+          }).config.system.build.etc;
+
+          module-eval-rocm-true = (inputs.nixpkgs.lib.nixosSystem {
+            inherit system;
+            modules = [
+              inputs.self.nixosModules.default
+              {
+                boot.loader.grub.enable = false;
+                fileSystems."/" = { device = "/dev/sda1"; fsType = "ext4"; };
+                hardware.amd-npu = {
+                  enable = true;
+                  enableFastFlowLM = true;
+                  enableLemonade = true;
+                  enableROCm = true;
+                  lemonade.user = "testuser";
+                };
+                users.users.testuser = {
+                  isNormalUser = true;
+                  extraGroups = ["video" "render"];
+                };
+              }
+            ];
+          }).config.system.build.etc;
         };
       };
     };

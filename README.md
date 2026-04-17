@@ -10,6 +10,7 @@ AMD AI inference stack for NixOS — packages XRT, XDNA driver plugin, FastFlowL
 | `xrt-plugin-amdxdna` | XDNA userspace driver plugin | Built from [amd/xdna-driver](https://github.com/amd/xdna-driver) branch `1.7` |
 | `fastflowlm` | NPU-optimized LLM runtime | Built from [FastFlowLM](https://github.com/FastFlowLM/FastFlowLM) |
 | `lemonade` | OpenAI-compatible local AI server | [lemonade-sdk/lemonade](https://github.com/lemonade-sdk/lemonade) RPM |
+| `llama-cpp-rocm` | ROCm-accelerated llama.cpp backend | Built from [ggerganov/llama.cpp](https://github.com/ggerganov/llama.cpp) |
 
 ## Usage
 
@@ -25,7 +26,7 @@ inputs.nix-amd-ai.url = "github:noamsto/nix-amd-ai";
     enable = true;
     enableFastFlowLM = true;  # LLM inference on NPU
     enableLemonade = true;    # OpenAI-compatible API server
-    enableROCm = false;       # ROCm GPU backends for Lemonade
+    enableROCm = true;        # Declaratively wires ROCm GPU backends for Lemonade
     lemonade.user = "youruser";
   };
 
@@ -57,6 +58,25 @@ trusted-public-keys = ["nix-amd-ai.cachix.org-1:F4OU4vw/lV2oiG6SBHZ+nqjl4EFJuqI4
 - XRT + plugin merged tree for runtime plugin discovery
 - Lemonade systemd service with XRT/FLM/ROCm environment
 - Environment variables (`XILINX_XRT`, `XRT_PATH`)
+- Declarative backend wiring (both the `lemond` service and direct CLI usage receive the ROCm backend path automatically)
+
+## Verification
+
+You can verify that the ROCm backend is correctly wired by running:
+
+```bash
+lemonade backends
+```
+
+The output should include the `llamacpp:rocm` backend:
+
+```
++---------------+----------------------------------------------------+---------+
+|    BACKEND    |                        PATH                        | STATUS  |
++---------------+----------------------------------------------------+---------+
+| llamacpp:rocm | /nix/store/...-llama-cpp-rocm-.../bin/llama-server | ready   |
++---------------+----------------------------------------------------+---------+
+```
 
 ## CI
 
