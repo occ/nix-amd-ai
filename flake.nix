@@ -14,10 +14,16 @@
         overlays.default = final: prev: let
           xrt = final.callPackage ./pkgs/xrt {};
           fastflowlm = final.callPackage ./pkgs/fastflowlm {inherit xrt;};
+          # Lemonade RPM requires libwebsockets.so.20 (>= 4.4); pin to the
+          # version from nix-amd-ai's nixpkgs input for consumers on older channels.
+          libwebsockets-pinned = (import inputs.nixpkgs {inherit (final) system;}).libwebsockets;
         in {
           inherit xrt fastflowlm;
           xrt-plugin-amdxdna = final.callPackage ./pkgs/xrt-plugin-amdxdna {inherit xrt;};
-          lemonade = final.callPackage ./pkgs/lemonade {inherit fastflowlm;};
+          lemonade = final.callPackage ./pkgs/lemonade {
+            inherit fastflowlm;
+            libwebsockets = libwebsockets-pinned;
+          };
           llama-cpp-rocm = prev.llama-cpp-rocm;
           llama-cpp-vulkan = prev.llama-cpp.override {vulkanSupport = true;};
         };
